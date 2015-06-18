@@ -141,11 +141,11 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
 
             info.openCount++;
 
-
             while (!info.sockets.isEmpty()) {
                 IdleSocketHolder idleSocketHolder = info.sockets.pop();
                 final AsyncSocket socket = idleSocketHolder.socket;
                 if (idleSocketHolder.idleTime + idleTimeoutMs < System.currentTimeMillis()) {
+                    socket.setClosedCallback(null);
                     socket.close();
                     continue;
                 }
@@ -168,19 +168,19 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
             String unresolvedHost;
             int unresolvedPort;
             boolean proxied = false;
+            if (data.request.getProxyHost() == null && proxyHost != null)
+                data.request.enableProxy(proxyHost, proxyPort);
             if (data.request.getProxyHost() != null) {
                 unresolvedHost = data.request.getProxyHost();
                 unresolvedPort = data.request.getProxyPort();
                 proxied = true;
             }
-            else if (proxyHost != null) {
-                unresolvedHost = proxyHost;
-                unresolvedPort = proxyPort;
-                proxied = true;
-            }
             else {
                 unresolvedHost = uri.getHost();
                 unresolvedPort = port;
+            }
+            if (proxied) {
+                data.request.logv("Using proxy: " + unresolvedHost + ":" + unresolvedPort);
             }
             return mClient.getServer().connectSocket(unresolvedHost, unresolvedPort,
                 wrapCallback(data, uri, port, proxied, data.connectCallback));
@@ -195,7 +195,7 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
             @Override
             protected void error(Exception e) {
                 super.error(e);
-                data.connectCallback.onConnectCompleted(e, null);
+                wrapCallback(data, uri, port, false, data.connectCallback).onConnectCompleted(e, null);
             }
 
             @Override
@@ -207,7 +207,7 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
                         if (lastException == null)
                             lastException = new ConnectionFailedException("Unable to connect to remote address");
                         if (setComplete(lastException)) {
-                            data.connectCallback.onConnectCompleted(lastException, null);
+                            wrapCallback(data, uri, port, false, data.connectCallback).onConnectCompleted(lastException, null);
                         }
                     }
                 });
@@ -276,6 +276,8 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
             if (idleSocketHolder.idleTime + idleTimeoutMs > System.currentTimeMillis())
                 break;
             info.sockets.pop();
+            // remove the callback, prevent reentrancy.
+            socket.setClosedCallback(null);
             socket.close();
         }
         if (info.openCount == 0 && info.queue.isEmpty() && info.sockets.isEmpty())
@@ -300,7 +302,6 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
             public void onCompleted(Exception ex) {
                 synchronized (AsyncSocketMiddleware.this) {
                     sockets.remove(idleSocketHolder);
-                    socket.setClosedCallback(null);
                     maybeCleanupConnectionInfo(lookup);
                 }
             }
@@ -312,6 +313,7 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
         socket.setEndCallback(new CompletedCallback() {
             @Override
             public void onCompleted(Exception ex) {
+                socket.setClosedCallback(null);
                 socket.close();
             }
         });
@@ -323,6 +325,7 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
             public void onDataAvailable(DataEmitter emitter, ByteBufferList bb) {
                 super.onDataAvailable(emitter, bb);
                 bb.recycle();
+                socket.setClosedCallback(null);
                 socket.close();
             }
         });
@@ -359,12 +362,14 @@ public class AsyncSocketMiddleware extends SimpleMiddleware {
 
             if (data.exception != null || !data.socket.isOpen()) {
                 data.request.logv("closing out socket (exception)");
+                data.socket.setClosedCallback(null);
                 data.socket.close();
                 return;
             }
             if (!HttpUtil.isKeepAlive(data.response.protocol(), data.response.headers())
                 || !HttpUtil.isKeepAlive(Protocol.HTTP_1_1, data.request.getHeaders())) {
                 data.request.logv("closing out socket (not keep alive)");
+                data.socket.setClosedCallback(null);
                 data.socket.close();
                 return;
             }
