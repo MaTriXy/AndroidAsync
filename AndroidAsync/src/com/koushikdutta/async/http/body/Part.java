@@ -4,11 +4,11 @@ import com.koushikdutta.async.DataSink;
 import com.koushikdutta.async.callback.CompletedCallback;
 import com.koushikdutta.async.http.Headers;
 import com.koushikdutta.async.http.Multimap;
-
-import org.apache.http.NameValuePair;
+import com.koushikdutta.async.http.NameValuePair;
 
 import java.io.File;
 import java.util.List;
+import java.util.Locale;
 
 public class Part {
     public static final String CONTENT_DISPOSITION = "Content-Disposition";
@@ -28,10 +28,10 @@ public class Part {
     public Part(String name, long length, List<NameValuePair> contentDisposition) {
         this.length = length;
         mHeaders = new Headers();
-        StringBuilder builder = new StringBuilder(String.format("form-data; name=\"%s\"", name));
+        StringBuilder builder = new StringBuilder(String.format(Locale.ENGLISH, "form-data; name=\"%s\"", name));
         if (contentDisposition != null) {
             for (NameValuePair pair: contentDisposition) {
-                builder.append(String.format("; %s=\"%s\"", pair.getName(), pair.getValue()));
+                builder.append(String.format(Locale.ENGLISH, "; %s=\"%s\"", pair.getName(), pair.getValue()));
             }
         }
         mHeaders.set(CONTENT_DISPOSITION, builder.toString());

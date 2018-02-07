@@ -15,6 +15,8 @@ import com.koushikdutta.async.future.TransformFuture;
 import com.koushikdutta.async.util.StreamUtility;
 
 import java.io.IOException;
+import java.net.Inet4Address;
+import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.SocketAddress;
@@ -25,6 +27,7 @@ import java.nio.channels.SelectionKey;
 import java.nio.channels.ServerSocketChannel;
 import java.nio.channels.SocketChannel;
 import java.nio.channels.spi.SelectorProvider;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.PriorityQueue;
 import java.util.Set;
@@ -126,6 +129,7 @@ public class AsyncServer {
         }
     }
 
+    private static ExecutorService synchronousWorkers = newSynchronousWorkers("AsyncServer-worker-");
     private static void wakeup(final SelectorWrapper selector) {
         synchronousWorkers.execute(new Runnable() {
             @Override
@@ -140,6 +144,7 @@ public class AsyncServer {
         });
     }
 
+    int postCounter = 0;
     public Object postDelayed(Runnable runnable, long delay) {
         Scheduled s;
         synchronized (this) {
@@ -152,10 +157,14 @@ public class AsyncServer {
             // as it will always be less than the current time and also remain
             // behind all other immediately run queue items.
             long time;
-            if (delay != 0)
+            if (delay > 0)
                 time = System.currentTimeMillis() + delay;
+            else if (delay == 0)
+                time = postCounter++;
+            else if (mQueue.size() > 0)
+                time = Math.min(0, mQueue.peek().time - 1);
             else
-                time = mQueue.size();
+                time = 0;
             mQueue.add(s = new Scheduled(runnable, time));
             // start the server up if necessary
             if (mSelector == null)
@@ -165,6 +174,14 @@ public class AsyncServer {
             }
         }
         return s;
+    }
+
+    public Object postImmediate(Runnable runnable) {
+        if (Thread.currentThread() == getAffinity()) {
+            runnable.run();
+            return null;
+        }
+        return postDelayed(runnable, -1);
     }
 
     public Object post(Runnable runnable) {
@@ -317,6 +334,7 @@ public class AsyncServer {
                     });
                 }
                 catch (IOException e) {
+                    Log.e(LOGTAG, "wtf", e);
                     StreamUtility.closeQuietly(closeableWrapper, closeableServer);
                     handler.onCompleted(e);
                 }
@@ -401,21 +419,35 @@ public class AsyncServer {
         return connectSocket(InetSocketAddress.createUnresolved(host, port), callback);
     }
 
-    private static ExecutorService newSynchronousWorkers() {
-        ThreadFactory tf = new NamedThreadFactory("AsyncServer-worker-");
+    private static ExecutorService newSynchronousWorkers(String prefix) {
+        ThreadFactory tf = new NamedThreadFactory(prefix);
         ThreadPoolExecutor tpe = new ThreadPoolExecutor(1, 4, 10L,
             TimeUnit.SECONDS, new LinkedBlockingQueue<Runnable>(), tf);
         return tpe;
     }
 
-    private static ExecutorService synchronousWorkers = newSynchronousWorkers();
+    private static final Comparator<InetAddress> ipSorter = new Comparator<InetAddress>() {
+        @Override
+        public int compare(InetAddress lhs, InetAddress rhs) {
+            if (lhs instanceof Inet4Address && rhs instanceof Inet4Address)
+                return 0;
+            if (lhs instanceof Inet6Address && rhs instanceof Inet6Address)
+                return 0;
+            if (lhs instanceof Inet4Address && rhs instanceof Inet6Address)
+                return -1;
+            return 1;
+        }
+    };
+
+    private static ExecutorService synchronousResolverWorkers = newSynchronousWorkers("AsyncServer-resolver-");
     public Future<InetAddress[]> getAllByName(final String host) {
         final SimpleFuture<InetAddress[]> ret = new SimpleFuture<InetAddress[]>();
-        synchronousWorkers.execute(new Runnable() {
+        synchronousResolverWorkers.execute(new Runnable() {
             @Override
             public void run() {
                 try {
                     final InetAddress[] result = InetAddress.getAllByName(host);
+                    Arrays.sort(result, ipSorter);
                     if (result == null || result.length == 0)
                         throw new HostnameResolutionException("no addresses for host");
                     post(new Runnable() {
@@ -708,6 +740,7 @@ public class AsyncServer {
             run.runnable.run();
         }
 
+        server.postCounter = 0;
         return wait;
     }
 

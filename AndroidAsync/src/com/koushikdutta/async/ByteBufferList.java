@@ -162,8 +162,12 @@ public class ByteBufferList {
         while (need > 0) {
             ByteBuffer b = mBuffers.peek();
             int read = Math.min(b.remaining(), need);
-            if (bytes != null)
+            if (bytes != null){
                 b.get(bytes, offset, read);
+            } else {
+                //when bytes is null, just skip data.
+                b.position(b.position() + read);
+            }
             need -= read;
             offset += read;
             if (b.remaining() == 0) {
@@ -412,8 +416,11 @@ public class ByteBufferList {
     static PriorityQueue<ByteBuffer> reclaimed = new PriorityQueue<ByteBuffer>(8, new Reclaimer());
 
     private static PriorityQueue<ByteBuffer> getReclaimed() {
-        if (Thread.currentThread() == Looper.getMainLooper().getThread())
-            return null;
+        Looper mainLooper = Looper.getMainLooper();
+        if (mainLooper != null) {
+            if (Thread.currentThread() == mainLooper.getThread())
+                return null;
+        }
         return reclaimed;
     }
 

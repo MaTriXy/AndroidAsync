@@ -6,16 +6,7 @@ import android.util.Log;
 import com.koushikdutta.async.AsyncSSLException;
 import com.koushikdutta.async.http.body.AsyncHttpRequestBody;
 
-import org.apache.http.Header;
-import org.apache.http.HeaderIterator;
-import org.apache.http.HttpRequest;
-import org.apache.http.ProtocolVersion;
-import org.apache.http.RequestLine;
-import org.apache.http.message.BasicHeader;
-import org.apache.http.params.HttpParams;
-
-import java.util.List;
-import java.util.Map;
+import java.util.Locale;
 
 public class AsyncHttpRequest {
     public RequestLine getRequestLine() {
@@ -38,7 +29,7 @@ public class AsyncHttpRequest {
             @Override
             public String toString() {
                 if (proxyHost != null)
-                    return String.format("%s %s HTTP/1.1", mMethod, AsyncHttpRequest.this.getUri());
+                    return String.format(Locale.ENGLISH, "%s %s HTTP/1.1", mMethod, AsyncHttpRequest.this.getUri());
                 String path = AsyncHttpRequest.this.getUri().getEncodedPath();
                 if (path == null || path.length() == 0)
                     path = "/";
@@ -46,7 +37,7 @@ public class AsyncHttpRequest {
                 if (query != null && query.length() != 0) {
                     path += "?" + query;
                 }
-                return String.format("%s %s HTTP/1.1", mMethod, path);
+                return String.format(Locale.ENGLISH, "%s %s HTTP/1.1", mMethod, path);
             }
         };
     }
@@ -140,134 +131,6 @@ public class AsyncHttpRequest {
         mTimeout = timeout;
         return this;
     }
-    
-    public static AsyncHttpRequest create(HttpRequest request) {
-        AsyncHttpRequest ret = new AsyncHttpRequest(Uri.parse(request.getRequestLine().getUri()), request.getRequestLine().getMethod());
-        for (Header header: request.getAllHeaders()) {
-            ret.getHeaders().add(header.getName(), header.getValue());
-        }
-        return ret;
-    }
-
-    private static class HttpRequestWrapper implements HttpRequest {
-        AsyncHttpRequest request;
-
-        @Override
-        public RequestLine getRequestLine() {
-            return request.getRequestLine();
-        }
-
-        public HttpRequestWrapper(AsyncHttpRequest request) {
-            this.request = request;
-        }
-
-
-        @Override
-        public void addHeader(Header header) {
-            request.getHeaders().add(header.getName(), header.getValue());
-        }
-
-        @Override
-        public void addHeader(String name, String value) {
-            request.getHeaders().add(name, value);
-        }
-
-        @Override
-        public boolean containsHeader(String name) {
-            return request.getHeaders().get(name) != null;
-        }
-
-        @Override
-        public Header[] getAllHeaders() {
-            return request.getHeaders().toHeaderArray();
-        }
-
-        @Override
-        public Header getFirstHeader(String name) {
-            String value = request.getHeaders().get(name);
-            if (value == null)
-                return null;
-            return new BasicHeader(name, value);
-        }
-
-        @Override
-        public Header[] getHeaders(String name) {
-            Map<String, List<String>> map = request.getHeaders().getMultiMap();
-            List<String> vals = map.get(name);
-            if (vals == null)
-                return new Header[0];
-            Header[] ret = new Header[vals.size()];
-            for (int i = 0; i < ret.length; i++)
-                ret[i] = new BasicHeader(name, vals.get(i));
-            return ret;
-        }
-
-        @Override
-        public Header getLastHeader(String name) {
-            Header[] vals = getHeaders(name);
-            if (vals.length == 0)
-                return null;
-            return vals[vals.length - 1];
-        }
-
-        HttpParams params;
-        @Override
-        public HttpParams getParams() {
-            return params;
-        }
-
-        @Override
-        public ProtocolVersion getProtocolVersion() {
-            return new ProtocolVersion("HTTP", 1, 1);
-        }
-
-        @Override
-        public HeaderIterator headerIterator() {
-            assert false;
-            return null;
-        }
-
-        @Override
-        public HeaderIterator headerIterator(String name) {
-            assert false;
-            return null;
-        }
-
-        @Override
-        public void removeHeader(Header header) {
-            request.getHeaders().remove(header.getName());
-        }
-
-        @Override
-        public void removeHeaders(String name) {
-            request.getHeaders().remove(name);
-        }
-
-        @Override
-        public void setHeader(Header header) {
-            setHeader(header.getName(), header.getValue());
-        }
-
-        @Override
-        public void setHeader(String name, String value) {
-            request.getHeaders().set(name, value);
-        }
-
-        @Override
-        public void setHeaders(Header[] headers) {
-            for (Header header: headers)
-                setHeader(header);
-        }
-
-        @Override
-        public void setParams(HttpParams params) {
-            this.params = params;
-        }
-    }
-
-    public HttpRequest asHttpRequest() {
-        return new HttpRequestWrapper(this);
-    }
 
     public AsyncHttpRequest setHeader(String name, String value) {
         getHeaders().set(name, value);
@@ -326,7 +189,7 @@ public class AsyncHttpRequest {
             elapsed = System.currentTimeMillis() - executionTime;
         else
             elapsed = 0;
-        return String.format("(%d ms) %s: %s", elapsed, getUri(), message);
+        return String.format(Locale.ENGLISH, "(%d ms) %s: %s", elapsed, getUri(), message);
     }
     public void logi(String message) {
         if (LOGTAG == null)

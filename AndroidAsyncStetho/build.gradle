@@ -1,7 +1,7 @@
 apply plugin: 'com.android.library'
 
 dependencies {
-    compile project(':AndroidAsync:AndroidAsync')
+    compile project(':AndroidAsync')
     compile "com.facebook.stetho:stetho:1.0.0"
 }
 
@@ -24,8 +24,9 @@ android {
         minSdkVersion 9
     }
 
-    compileSdkVersion 22
-    buildToolsVersion '22.0.0'
+    compileSdkVersion project.hasProperty('global_compileSdkVersion') ? global_compileSdkVersion : 25
+    buildToolsVersion project.hasProperty('global_buildToolsVersion') ? global_buildToolsVersion : '25.0.2'
+
 }
 
 // upload to maven task

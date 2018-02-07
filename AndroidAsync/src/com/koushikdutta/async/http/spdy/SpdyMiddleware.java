@@ -32,6 +32,7 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Hashtable;
 import java.util.List;
+import java.util.Locale;
 
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLEngine;
@@ -40,6 +41,11 @@ public class SpdyMiddleware extends AsyncSSLSocketMiddleware {
     public SpdyMiddleware(AsyncHttpClient client) {
         super(client);
         addEngineConfigurator(new AsyncSSLEngineConfigurator() {
+            @Override
+            public SSLEngine createEngine(SSLContext sslContext, String peerHost, int peerPort) {
+                return null;
+            }
+
             @Override
             public void configureEngine(SSLEngine engine, GetSocketData data, String host, int port) {
                 configure(engine, data, host, port);
@@ -222,11 +228,6 @@ public class SpdyMiddleware extends AsyncSSLSocketMiddleware {
                     public void settings(boolean clearPrevious, Settings settings) {
                         super.settings(clearPrevious, settings);
                         if (!hasReceivedSettings) {
-                            try {
-                                sendConnectionPreface();
-                            } catch (IOException e1) {
-                                e1.printStackTrace();
-                            }
                             hasReceivedSettings = true;
 
                             SpdyConnectionWaiter waiter = connections.get(key);
@@ -240,6 +241,12 @@ public class SpdyMiddleware extends AsyncSSLSocketMiddleware {
                         }
                     }
                 };
+
+                try {
+                    connection.sendConnectionPreface();
+                } catch (IOException e1) {
+                    e1.printStackTrace();
+                }
             }
         };
     }
@@ -278,7 +285,7 @@ public class SpdyMiddleware extends AsyncSSLSocketMiddleware {
             if (SpdyTransport.isProhibitedHeader(connection.protocol, key))
                 continue;
             for (String value: mm.get(key)) {
-                headers.add(new Header(key.toLowerCase(), value));
+                headers.add(new Header(key.toLowerCase(Locale.US), value));
             }
         }
 
