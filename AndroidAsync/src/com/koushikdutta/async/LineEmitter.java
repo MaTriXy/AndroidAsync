@@ -1,7 +1,5 @@
 package com.koushikdutta.async;
 
-import android.util.Log;
-
 import com.koushikdutta.async.callback.DataCallback;
 
 import java.nio.ByteBuffer;
@@ -39,7 +37,6 @@ public class LineEmitter implements DataCallback {
         while (bb.remaining() > 0) {
             byte b = bb.get();
             if (b == '\n') {
-                assert mLineCallback != null;
                 buffer.flip();
                 data.add(buffer);
                 mLineCallback.onStringAvailable(data.readString(charset));

@@ -6,31 +6,45 @@ import java.util.ArrayList;
  * Created by koush on 2/25/14.
  */
 public class MultiFuture<T> extends SimpleFuture<T> {
-    ArrayList<FutureCallback<T>> callbacks;
+    private ArrayList<FutureCallbackInternal<T>> internalCallbacks;
 
-    final FutureCallback<T> callback = new FutureCallback<T>() {
-        @Override
-        public void onCompleted(Exception e, T result) {
-            ArrayList<FutureCallback<T>> callbacks;
-            synchronized (MultiFuture.this) {
-                callbacks = MultiFuture.this.callbacks;
-                MultiFuture.this.callbacks = null;
-            }
+    public MultiFuture() {
+    }
 
-            if (callbacks == null)
-                return;
-            for (FutureCallback<T> cb: callbacks) {
-                cb.onCompleted(e, result);
-            }
+    public MultiFuture(T value) {
+        super(value);
+    }
+
+    public MultiFuture(Exception e) {
+        super(e);
+    }
+
+    public MultiFuture(Future<T> future) {
+        super(future);
+    }
+
+    private final FutureCallbackInternal<T> internalCallback = (e, result, callsite) -> {
+        ArrayList<FutureCallbackInternal<T>> callbacks;
+        synchronized (MultiFuture.this) {
+            callbacks = MultiFuture.this.internalCallbacks;
+            MultiFuture.this.internalCallbacks = null;
+        }
+
+        if (callbacks == null)
+            return;
+        for (FutureCallbackInternal<T> cb : callbacks) {
+            cb.onCompleted(e, result, callsite);
         }
     };
 
     @Override
-    public MultiFuture<T> setCallback(FutureCallback<T> callback) {
+    protected void setCallbackInternal(FutureCallsite callsite, FutureCallbackInternal<T> internalCallback) {
         synchronized (this) {
-            if (callbacks == null)
-                callbacks = new ArrayList<FutureCallback<T>>();
-            callbacks.add(callback);
+            if (internalCallback != null) {
+                if (internalCallbacks == null)
+                    internalCallbacks = new ArrayList<>();
+                internalCallbacks.add(internalCallback);
+            }
         }
         // so, there is a race condition where this internal callback could get
         // executed twice, if two callbacks are added at the same time.
@@ -44,7 +58,7 @@ public class MultiFuture<T> extends SimpleFuture<T> {
         // 2-ADD
         // 1-INVOKE LIST
         // 2-INVOKE NULL
-        super.setCallback(this.callback);
-        return this;
+
+        super.setCallbackInternal(callsite, this.internalCallback);
     }
 }

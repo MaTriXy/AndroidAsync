@@ -15,11 +15,9 @@ import com.koushikdutta.async.callback.ConnectCallback;
 import com.koushikdutta.async.callback.DataCallback;
 import com.koushikdutta.async.future.Cancellable;
 import com.koushikdutta.async.future.Future;
-import com.koushikdutta.async.future.FutureCallback;
 import com.koushikdutta.async.future.SimpleFuture;
 import com.koushikdutta.async.http.callback.HttpConnectCallback;
 import com.koushikdutta.async.http.callback.RequestCallback;
-import com.koushikdutta.async.http.spdy.SpdyMiddleware;
 import com.koushikdutta.async.parser.AsyncParser;
 import com.koushikdutta.async.parser.ByteBufferListParser;
 import com.koushikdutta.async.parser.JSONArrayParser;
@@ -65,14 +63,14 @@ public class AsyncHttpClient {
         mMiddleware.add(0, middleware);
     }
 
-    SpdyMiddleware sslSocketMiddleware;
+    AsyncSSLSocketMiddleware sslSocketMiddleware;
     AsyncSocketMiddleware socketMiddleware;
     HttpTransportMiddleware httpTransportMiddleware;
     AsyncServer mServer;
     public AsyncHttpClient(AsyncServer server) {
         mServer = server;
         insertMiddleware(socketMiddleware = new AsyncSocketMiddleware(this));
-        insertMiddleware(sslSocketMiddleware = new SpdyMiddleware(this));
+        insertMiddleware(sslSocketMiddleware = new AsyncSSLSocketMiddleware(this));
         insertMiddleware(httpTransportMiddleware = new HttpTransportMiddleware());
         sslSocketMiddleware.addEngineConfigurator(new SSLEngineSNIConfigurator());
     }
@@ -117,7 +115,7 @@ public class AsyncHttpClient {
         return socketMiddleware;
     }
 
-    public SpdyMiddleware getSSLSocketMiddleware() {
+    public AsyncSSLSocketMiddleware getSSLSocketMiddleware() {
         return sslSocketMiddleware;
     }
 
@@ -134,7 +132,7 @@ public class AsyncHttpClient {
     private static final String LOGTAG = "AsyncHttp";
     private class FutureAsyncHttpResponse extends SimpleFuture<AsyncHttpResponse> {
         public AsyncSocket socket;
-        public Object scheduled;
+        public Cancellable scheduled;
         public Runnable timeoutRunnable;
 
         @Override
@@ -148,15 +146,14 @@ public class AsyncHttpClient {
             }
 
             if (scheduled != null)
-                mServer.removeAllCallbacks(scheduled);
+                scheduled.cancel();
 
             return true;
         }
     }
 
     private void reportConnectedCompleted(FutureAsyncHttpResponse cancel, Exception ex, AsyncHttpResponseImpl response, AsyncHttpRequest request, final HttpConnectCallback callback) {
-        assert callback != null;
-        mServer.removeAllCallbacks(cancel.scheduled);
+        cancel.scheduled.cancel();
         boolean complete;
         if (ex != null) {
             request.loge("Connection error", ex);
@@ -168,7 +165,6 @@ public class AsyncHttpClient {
         }
         if (complete) {
             callback.onConnectCompleted(ex, response);
-            assert ex != null || response.socket() == null || response.getDataCallback() != null || response.isPaused();
             return;
         }
 
@@ -206,13 +202,12 @@ public class AsyncHttpClient {
     }
 
     private void executeAffinity(final AsyncHttpRequest request, final int redirectCount, final FutureAsyncHttpResponse cancel, final HttpConnectCallback callback) {
-        assert mServer.isAffinityThread();
         if (redirectCount > 15) {
             reportConnectedCompleted(cancel, new RedirectLimitExceededException("too many redirects"), null, request, callback);
             return;
         }
         final Uri uri = request.getUri();
-        final AsyncHttpClientMiddleware.OnResponseCompleteDataOnRequestSentData data = new AsyncHttpClientMiddleware.OnResponseCompleteDataOnRequestSentData();
+        final AsyncHttpClientMiddleware.OnResponseCompleteData data = new AsyncHttpClientMiddleware.OnResponseCompleteData();
         request.executionTime = System.currentTimeMillis();
         data.request = request;
 
@@ -273,7 +268,7 @@ public class AsyncHttpClient {
 
                 // 3) on connect, cancel timeout
                 if (cancel.timeoutRunnable != null)
-                    mServer.removeAllCallbacks(cancel.scheduled);
+                    cancel.scheduled.cancel();
 
                 if (ex != null) {
                     reportConnectedCompleted(cancel, ex, null, request, callback);
@@ -311,7 +306,7 @@ public class AsyncHttpClient {
 
     private void executeSocket(final AsyncHttpRequest request, final int redirectCount,
                                final FutureAsyncHttpResponse cancel, final HttpConnectCallback callback,
-                               final AsyncHttpClientMiddleware.OnResponseCompleteDataOnRequestSentData data) {
+                               final AsyncHttpClientMiddleware.OnResponseCompleteData data) {
         // 4) wait for request to be sent fully
         // and
         // 6) wait for headers
@@ -328,7 +323,7 @@ public class AsyncHttpClient {
                     return;
                 // 5) after request is sent, set a header timeout
                 if (cancel.timeoutRunnable != null && mHeaders == null) {
-                    mServer.removeAllCallbacks(cancel.scheduled);
+                    cancel.scheduled.cancel();
                     cancel.scheduled = mServer.postDelayed(cancel.timeoutRunnable, getTimeoutRemaining(request));
                 }
 
@@ -345,6 +340,25 @@ public class AsyncHttpClient {
                 }
 
                 super.setDataEmitter(data.bodyEmitter);
+
+                for (AsyncHttpClientMiddleware middleware: mMiddleware) {
+                    AsyncHttpRequest newReq = middleware.onResponseReady(data);
+                    if (newReq != null) {
+                        newReq.executionTime = request.executionTime;
+                        newReq.logLevel = request.logLevel;
+                        newReq.LOGTAG = request.LOGTAG;
+                        newReq.proxyHost = request.proxyHost;
+                        newReq.proxyPort = request.proxyPort;
+                        setupAndroidProxy(newReq);
+
+                        request.logi("Response intercepted by middleware");
+                        newReq.logi("Request initiated by middleware intercept by middleware");
+                        // post to allow reuse of socket.
+                        mServer.post(() -> execute(newReq, redirectCount, cancel, callback));
+                        setDataCallback(new NullDataCallback());
+                        return;
+                    }
+                }
 
                 Headers headers = mHeaders;
                 int responseCode = code();
@@ -373,7 +387,7 @@ public class AsyncHttpClient {
                     copyHeader(request, newReq, "Range");
                     request.logi("Redirecting");
                     newReq.logi("Redirected");
-                    execute(newReq, redirectCount + 1, cancel, callback);
+                    mServer.post(() -> execute(newReq, redirectCount + 1, cancel, callback));
 
                     setDataCallback(new NullDataCallback());
                     return;
@@ -392,7 +406,7 @@ public class AsyncHttpClient {
 
                 // 7) on headers, cancel timeout
                 if (cancel.timeoutRunnable != null)
-                    mServer.removeAllCallbacks(cancel.scheduled);
+                    cancel.scheduled.cancel();
 
                 // allow the middleware to massage the headers before the body is decoded
                 request.logv("Received headers:\n" + toString());
@@ -631,61 +645,55 @@ public class AsyncHttpClient {
     public <T> SimpleFuture<T> execute(AsyncHttpRequest req, final AsyncParser<T> parser, final RequestCallback<T> callback) {
         final FutureAsyncHttpResponse cancel = new FutureAsyncHttpResponse();
         final SimpleFuture<T> ret = new SimpleFuture<T>();
-        execute(req, 0, cancel, new HttpConnectCallback() {
-            @Override
-            public void onConnectCompleted(Exception ex, final AsyncHttpResponse response) {
-                if (ex != null) {
-                    invoke(callback, ret, response, ex, null);
-                    return;
-                }
-                invokeConnect(callback, response);
-
-                Future<T> parsed = parser.parse(response)
-                .setCallback(new FutureCallback<T>() {
-                    @Override
-                    public void onCompleted(Exception e, T result) {
-                        invoke(callback, ret, response, e, result);
-                    }
-                });
-
-                // reparent to the new parser future
-                ret.setParent(parsed);
+        execute(req, 0, cancel, (ex, response) -> {
+            if (ex != null) {
+                invoke(callback, ret, response, ex, null);
+                return;
             }
+            invokeConnect(callback, response);
+
+            Future<T> parsed = parser.parse(response);
+            parsed.setCallback((e, result) -> invoke(callback, ret, response, e, result));
+
+            // reparent to the new parser future
+            ret.setParent(parsed);
         });
         ret.setParent(cancel);
         return ret;
     }
 
-    public static interface WebSocketConnectCallback {
-        public void onCompleted(Exception ex, WebSocket webSocket);
+    public interface WebSocketConnectCallback {
+        void onCompleted(Exception ex, WebSocket webSocket);
     }
 
     public Future<WebSocket> websocket(final AsyncHttpRequest req, String protocol, final WebSocketConnectCallback callback) {
-        WebSocketImpl.addWebSocketUpgradeHeaders(req, protocol);
-        final SimpleFuture<WebSocket> ret = new SimpleFuture<WebSocket>();
-        Cancellable connect = execute(req, new HttpConnectCallback() {
-            @Override
-            public void onConnectCompleted(Exception ex, AsyncHttpResponse response) {
-                if (ex != null) {
-                    if (ret.setComplete(ex)) {
-                        if (callback != null)
-                            callback.onCompleted(ex, null);
-                    }
-                    return;
+        return websocket(req, protocol != null ? new String[] { protocol } : null, callback);
+    }
+
+    public Future<WebSocket> websocket(final AsyncHttpRequest req, String[] protocols, final WebSocketConnectCallback callback) {
+        WebSocketImpl.addWebSocketUpgradeHeaders(req, protocols);
+        final SimpleFuture<WebSocket> ret = new SimpleFuture<>();
+        Cancellable connect = execute(req, (ex, response) -> {
+            if (ex != null) {
+                if (ret.setComplete(ex)) {
+                    if (callback != null)
+                        callback.onCompleted(ex, null);
                 }
-                WebSocket ws = WebSocketImpl.finishHandshake(req.getHeaders(), response);
-                if (ws == null) {
-                    ex = new WebSocketHandshakeException("Unable to complete websocket handshake");
-                    if (!ret.setComplete(ex))
-                        return;
-                }
-                else {
-                    if (!ret.setComplete(ws))
-                        return;
-                }
-                if (callback != null)
-                    callback.onCompleted(ex, ws);
+                return;
             }
+            WebSocket ws = WebSocketImpl.finishHandshake(req.getHeaders(), response);
+            if (ws == null) {
+                ex = new WebSocketHandshakeException("Unable to complete websocket handshake");
+                response.close();
+                if (!ret.setComplete(ex))
+                    return;
+            }
+            else {
+                if (!ret.setComplete(ws))
+                    return;
+            }
+            if (callback != null)
+                callback.onCompleted(ex, ws);
         });
 
         ret.setParent(connect);
@@ -693,9 +701,13 @@ public class AsyncHttpClient {
     }
 
     public Future<WebSocket> websocket(String uri, String protocol, final WebSocketConnectCallback callback) {
-//        assert callback != null;
         final AsyncHttpGet get = new AsyncHttpGet(uri.replace("ws://", "http://").replace("wss://", "https://"));
         return websocket(get, protocol, callback);
+    }
+
+    public Future<WebSocket> websocket(String uri, String[] protocols, final WebSocketConnectCallback callback) {
+        final AsyncHttpGet get = new AsyncHttpGet(uri.replace("ws://", "http://").replace("wss://", "https://"));
+        return websocket(get, protocols, callback);
     }
 
     public AsyncServer getServer() {

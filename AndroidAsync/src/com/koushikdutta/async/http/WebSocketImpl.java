@@ -140,8 +140,14 @@ public class WebSocketImpl implements WebSocket {
         
         setupParser(false, false);
     }
-    
-    public static void addWebSocketUpgradeHeaders(AsyncHttpRequest req, String protocol) {
+
+    String protocol;
+    @Override
+    public String getProtocol() {
+        return protocol;
+    }
+
+    public static void addWebSocketUpgradeHeaders(AsyncHttpRequest req, String... protocols) {
         Headers headers = req.getHeaders();
         final String key = Base64.encodeToString(toByteArray(UUID.randomUUID()),Base64.NO_WRAP);
         headers.set("Sec-WebSocket-Version", "13");
@@ -149,8 +155,11 @@ public class WebSocketImpl implements WebSocket {
         headers.set("Sec-WebSocket-Extensions", "x-webkit-deflate-frame");
         headers.set("Connection", "Upgrade");
         headers.set("Upgrade", "websocket");
-        if (protocol != null)
-            headers.set("Sec-WebSocket-Protocol", protocol);
+        if (protocols != null) {
+            for (String protocol: protocols) {
+                headers.add("Sec-WebSocket-Protocol", protocol);
+            }
+        }
         headers.set("Pragma", "no-cache");
         headers.set("Cache-Control", "no-cache");
         if (TextUtils.isEmpty(req.getHeaders().get("User-Agent")))
@@ -192,6 +201,7 @@ public class WebSocketImpl implements WebSocket {
         }
 
         WebSocketImpl ret = new WebSocketImpl(response.detachSocket());
+        ret.protocol = response.headers().get("Sec-WebSocket-Protocol");
         ret.setupParser(true, deflate);
         return ret;
     }
@@ -226,27 +236,27 @@ public class WebSocketImpl implements WebSocket {
 
     @Override
     public void send(byte[] bytes) {
-        mSink.write(new ByteBufferList((mParser.frame(bytes))));
+        getServer().post(() -> mSink.write(new ByteBufferList((mParser.frame(bytes)))));
     }
     
     @Override
     public void send(byte[] bytes, int offset, int len) {
-    	mSink.write(new ByteBufferList(mParser.frame(bytes, offset, len)));
+        getServer().post(() -> mSink.write(new ByteBufferList(mParser.frame(bytes, offset, len))));
     }
 
     @Override
     public void send(String string) {
-        mSink.write(new ByteBufferList((mParser.frame(string))));
+        getServer().post(() -> mSink.write(new ByteBufferList((mParser.frame(string)))));
     }
 
     @Override
     public void ping(String string) {
-        mSink.write(new ByteBufferList(ByteBuffer.wrap(mParser.pingFrame(string))));
+        getServer().post(() -> mSink.write(new ByteBufferList(ByteBuffer.wrap(mParser.pingFrame(string)))));
     }
 
     @Override
     public void pong(String string) {
-        mSink.write(new ByteBufferList(ByteBuffer.wrap(mParser.pongFrame(string))));
+        getServer().post(() -> mSink.write(new ByteBufferList(ByteBuffer.wrap(mParser.pongFrame(string)))));
     }
 
     private StringCallback mStringCallback;

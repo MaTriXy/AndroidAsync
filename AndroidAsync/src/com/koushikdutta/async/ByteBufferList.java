@@ -4,6 +4,7 @@ import android.annotation.TargetApi;
 import android.os.Build;
 import android.os.Looper;
 
+import com.koushikdutta.async.util.ArrayDeque;
 import com.koushikdutta.async.util.Charsets;
 
 import java.io.IOException;
@@ -60,19 +61,8 @@ public class ByteBufferList {
     }
 
     public byte[] getAllByteArray() {
-        // fast path to return the contents of the first and only byte buffer,
-        // if that's what we're looking for. avoids allocation.
-        if (mBuffers.size() == 1) {
-            ByteBuffer peek = mBuffers.peek();
-            if (peek.capacity() == remaining() && peek.isDirect()) {
-                remaining = 0;
-                return mBuffers.remove().array();
-            }
-        }
-
         byte[] ret = new byte[remaining()];
         get(ret);
-
         return ret;
     }
 
@@ -98,20 +88,24 @@ public class ByteBufferList {
     }
 
     public short peekShort() {
-        return read(2).duplicate().getShort();
+        return read(2).getShort(mBuffers.peekFirst().position());
+    }
+
+    public byte peek() {
+        return read(1).get(mBuffers.peekFirst().position());
     }
 
     public int peekInt() {
-        return read(4).duplicate().getInt();
+        return read(4).getInt(mBuffers.peekFirst().position());
     }
 
     public long peekLong() {
-        return read(8).duplicate().getLong();
+        return read(8).getLong(mBuffers.peekFirst().position());
     }
 
     public byte[] peekBytes(int size) {
         byte[] ret = new byte[size];
-        read(size).duplicate().get(ret);
+        read(size).get(ret, mBuffers.peekFirst().position(), ret.length);
         return ret;
     }
 
@@ -172,7 +166,6 @@ public class ByteBufferList {
             offset += read;
             if (b.remaining() == 0) {
                 ByteBuffer removed = mBuffers.remove();
-                assert b == removed;
                 reclaim(b);
             }
         }
@@ -202,8 +195,6 @@ public class ByteBufferList {
                 b.get(subset.array(), 0, need);
                 into.add(subset);
                 mBuffers.addFirst(b);
-                assert subset.capacity() >= need;
-                assert subset.position() == 0;
                 break;
             }
             else {
@@ -344,7 +335,6 @@ public class ByteBufferList {
         while (mBuffers.size() > 0) {
             reclaim(mBuffers.remove());
         }
-        assert mBuffers.size() == 0;
         remaining = 0;
     }
     
@@ -369,7 +359,7 @@ public class ByteBufferList {
     // not doing toString as this is really nasty in the debugger...
     public String peekString(Charset charset) {
         if (charset == null)
-            charset = Charsets.US_ASCII;
+            charset = Charsets.UTF_8;
         StringBuilder builder = new StringBuilder();
         for (ByteBuffer bb: mBuffers) {
             byte[] bytes;
@@ -471,14 +461,11 @@ public class ByteBufferList {
                 return;
             }
 
-            assert !reclaimedContains(b);
-
             b.position(0);
             b.limit(b.capacity());
             currentSize += b.capacity();
 
             r.add(b);
-            assert r.size() != 0 ^ currentSize == 0;
 
             maxItem = Math.max(maxItem, b.capacity());
         }
@@ -496,7 +483,6 @@ public class ByteBufferList {
                         if (r.size() == 0)
                             maxItem = 0;
                         currentSize -= ret.capacity();
-                        assert r.size() != 0 ^ currentSize == 0;
                         if (ret.capacity() >= size) {
 //                            System.out.println("using " + ret.capacity());
                             return ret;
@@ -522,7 +508,6 @@ public class ByteBufferList {
                 while (r.size() > 0 && total < size && index < arr.length - 1) {
                     ByteBuffer b = r.remove();
                     currentSize -= b.capacity();
-                    assert r.size() != 0 ^ currentSize == 0;
                     int needed = Math.min(size - total, b.capacity());
                     total += needed;
                     arr[index++] = b;
@@ -538,6 +523,12 @@ public class ByteBufferList {
         for (int i = index; i < arr.length; i++) {
             arr[i] = EMPTY_BYTEBUFFER;
         }
+    }
+
+    public static ByteBuffer deepCopy(ByteBuffer copyOf) {
+        if (copyOf == null)
+            return null;
+        return (ByteBuffer)obtain(copyOf.remaining()).put(copyOf.duplicate()).flip();
     }
 
     public static final ByteBuffer EMPTY_BYTEBUFFER = ByteBuffer.allocate(0);

@@ -8,7 +8,9 @@ import com.koushikdutta.async.callback.WritableCallback;
 import com.koushikdutta.async.util.Allocator;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.net.InetSocketAddress;
+import java.net.Socket;
 import java.nio.ByteBuffer;
 import java.nio.channels.CancelledKeyException;
 import java.nio.channels.DatagramChannel;
@@ -47,7 +49,6 @@ public class AsyncNetworkSocket implements AsyncSocket {
     }
     
     public void onDataWritable() {
-//        assert mWriteableHandler != null;
         if (!mChannel.isChunked()) {
             // turn write off
             mKey.interestOps(~SelectionKey.OP_WRITE & mKey.interestOps());
@@ -77,7 +78,6 @@ public class AsyncNetworkSocket implements AsyncSocket {
             return;
         }
         if (!mChannel.isConnected()) {
-            assert !mChannel.isChunked();
             return;
         }
 
@@ -101,7 +101,6 @@ public class AsyncNetworkSocket implements AsyncSocket {
             throw new IOException(new CancelledKeyException());
         if (remaining > 0) {
             // chunked channels should not fail
-            assert !mChannel.isChunked();
             // register for a write notification if a write fails
             // turn write on
             mKey.interestOps(SelectionKey.OP_WRITE | mKey.interestOps());
@@ -123,49 +122,52 @@ public class AsyncNetworkSocket implements AsyncSocket {
         if (mPaused)
             return 0;
         int total = 0;
-        try {
-            boolean closed = false;
+        boolean closed = false;
 
 //            ByteBufferList.obtainArray(buffers, Math.min(Math.max(mToAlloc, 2 << 11), maxAlloc));
-            ByteBuffer b = allocator.allocate();
-            // keep track of the max mount read during this read cycle
-            // so we can be quicker about allocations during the next
-            // time this socket reads.
-            long read = mChannel.read(b);
-            if (read < 0) {
-                closeInternal();
-                closed = true;
-            }
-            else {
-                total += read;
-            }
-            if (read > 0) {
-                allocator.track(read);
-                b.flip();
+        ByteBuffer b = allocator.allocate();
+        // keep track of the max mount read during this read cycle
+        // so we can be quicker about allocations during the next
+        // time this socket reads.
+        long read;
+        try {
+            read = mChannel.read(b);
+        }
+        catch (Exception e) {
+            read = -1;
+            closeInternal();
+            reportEndPending(e);
+            reportClose(e);
+        }
+
+        if (read < 0) {
+            closeInternal();
+            closed = true;
+        }
+        else {
+            total += read;
+        }
+        if (read > 0) {
+            allocator.track(read);
+            b.flip();
 //                for (int i = 0; i < buffers.length; i++) {
 //                    ByteBuffer b = buffers[i];
 //                    buffers[i] = null;
 //                    b.flip();
 //                    pending.add(b);
 //                }
-                pending.add(b);
-                Util.emitAllData(this, pending);
-            }
-            else {
-                ByteBufferList.reclaim(b);
-            }
+            pending.add(b);
+            Util.emitAllData(this, pending);
+        }
+        else {
+            ByteBufferList.reclaim(b);
+        }
 
-            if (closed) {
-                reportEndPending(null);
-                reportClose(null);
-            }
+        if (closed) {
+            reportEndPending(null);
+            reportClose(null);
         }
-        catch (Exception e) {
-            closeInternal();
-            reportEndPending(e);
-            reportClose(e);
-        }
-        
+
         return total;
     }
     
@@ -186,7 +188,7 @@ public class AsyncNetworkSocket implements AsyncSocket {
         reportClose(null);
     }
 
-    public void closeInternal() {
+    private void closeInternal() {
         mKey.cancel();
         try {
             mChannel.close();
@@ -333,7 +335,11 @@ public class AsyncNetworkSocket implements AsyncSocket {
     public InetSocketAddress getRemoteAddress() {
         return socketAddress;
     }
-    
+
+    public InetAddress getLocalAddress() {
+        return mChannel.getLocalAddress();
+    }
+
     public int getLocalPort() {
         return mChannel.getLocalPort();
     }

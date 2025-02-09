@@ -1,6 +1,7 @@
 package com.koushikdutta.async;
 
 import java.io.IOException;
+import java.net.InetAddress;
 import java.nio.ByteBuffer;
 import java.nio.channels.ClosedChannelException;
 import java.nio.channels.SelectionKey;
@@ -19,6 +20,11 @@ class ServerSocketChannelWrapper extends ChannelWrapper {
     }
 
     @Override
+    public InetAddress getLocalAddress() {
+        return mChannel.socket().getInetAddress();
+    }
+
+    @Override
     public int getLocalPort() {
         return mChannel.socket().getLocalPort();
     }
@@ -31,20 +37,17 @@ class ServerSocketChannelWrapper extends ChannelWrapper {
     @Override
     public int read(ByteBuffer buffer) throws IOException {
         final String msg = "Can't read ServerSocketChannel";
-        assert false;
         throw new IOException(msg);
     }
 
     @Override
     public boolean isConnected() {
-        assert false;
         return false;
     }
 
     @Override
     public int write(ByteBuffer src) throws IOException {
         final String msg = "Can't write ServerSocketChannel";
-        assert false;
         throw new IOException(msg);
     }
 
@@ -56,21 +59,18 @@ class ServerSocketChannelWrapper extends ChannelWrapper {
     @Override
     public int write(ByteBuffer[] src) throws IOException {
         final String msg = "Can't write ServerSocketChannel";
-        assert false;
         throw new IOException(msg);
     }
 
     @Override
     public long read(ByteBuffer[] byteBuffers) throws IOException {
         final String msg = "Can't read ServerSocketChannel";
-        assert false;
         throw new IOException(msg);
     }
 
     @Override
     public long read(ByteBuffer[] byteBuffers, int i, int i2) throws IOException {
         final String msg = "Can't read ServerSocketChannel";
-        assert false;
         throw new IOException(msg);
     }
 

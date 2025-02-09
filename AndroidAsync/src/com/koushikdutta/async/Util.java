@@ -36,7 +36,6 @@ public class Util {
                 list.recycle();
                 if (SUPRESS_DEBUG_EXCEPTIONS)
                     return;
-                assert false;
                 throw new RuntimeException("mDataHandler failed to consume data, yet remains the mDataHandler.");
             }
         }
@@ -50,8 +49,7 @@ public class Util {
             list.recycle();
             if (SUPRESS_DEBUG_EXCEPTIONS)
                 return;
-            assert false;
-            throw new RuntimeException("Not all data was consumed by Util.emitAllData");
+//            throw new AssertionError("Not all data was consumed by Util.emitAllData");
         }
     }
 
@@ -80,7 +78,7 @@ public class Util {
                 StreamUtility.closeQuietly(is);
             }
             ByteBufferList pending = new ByteBufferList();
-            Allocator allocator = new Allocator();
+            Allocator allocator = new Allocator().setMinAlloc((int)Math.min(2 << 19, max));
 
             @Override
             public void onWriteable() {
